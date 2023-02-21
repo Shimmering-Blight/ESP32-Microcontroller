@@ -9,27 +9,40 @@ TaskHandle_t Task1;
 TaskHandle_t Task2;
 
 // constants
-const int led_pin = 2;
-const int homing_button = 5;
-const int grasping_button = 18;
-const int moving_button = 19;
-const int releasing_button = 21;
+const int led_pin = 2;                  // on-board LED
+const int rotary_encoder_pin = 4;       // motor position sensor
+const int voltage_converter_pin = 12;   // connected to VIN of LT8300 flyback converter
+const int item_sensor_pin = 13;         // item detection
+const int destination_sensor_pin = 14;  // destination detection
+const int strain_sensor_pin = 33;       // gripper force detection
+const int limit_switch_pin = 34;        // limit switch
+const int homing_button = 5;            // go-to HOMING state
+const int grasping_button = 18;         // go-to GRASPING state
+const int moving_button = 19;           // go-to MOVING state
+const int releasing_button = 21;        // go-to RELEASING state
 
 // variables
-volatile int state = HOMING;
-int pinState[] = {0,0,0,0};
+volatile int state = HOMING;            // global FSM state
+volatile int motor_position;            // reading from rotary_encoder_pin (set in ISR)
+int pinState[] = {0,0,0,0};             // used for debouncing, etc...
 int lastPinState[] = {0,0,0,0};
 int lastDbTime = 0;
 
 void setup() {
-  Serial.begin(115200);
-  pinMode(led_pin, OUTPUT); // on-board led
-  pinMode(homing_button, INPUT_PULLUP); // button from input pin to ground
-  pinMode(grasping_button, INPUT_PULLUP); // etc...
-  pinMode(moving_button, INPUT_PULLUP);
-  pinMode(releasing_button, INPUT_PULLUP);
-  setup1(); // initialize core 1 and
-  setup2(); // core 2
+  Serial.begin(115200);   
+  Serial.println("Hello World!");
+  pinMode(led_pin, OUTPUT);
+  pinMode(voltage_converter_pin, OUTPUT);
+  pinMode(item_sensor_pin, INPUT);
+  pinMode(destination_sensor_pin, INPUT);
+  pinMode(strain_sensor_pin, INPUT);
+  pinMode(limit_switch_pin, INPUT_PULLUP); // connect switch from input pin to ground
+  pinMode(homing_button, INPUT_PULLUP); // connect button from input pin to ground
+  pinMode(grasping_button, INPUT_PULLUP); // connect button from input pin to ground
+  pinMode(moving_button, INPUT_PULLUP); // connect button from input pin to ground
+  pinMode(releasing_button, INPUT_PULLUP); // connect button from input pin to ground
+  setup1(); // initialize core 1
+  setup2(); // initialize core 2
   Serial.println("Here we go!");
 }
 
@@ -57,6 +70,9 @@ void setup2() {
 
 void loop() {}
 
+/**
+ * FSM Controller
+ */
 void loop1(void * parameter) {
   for (;;) {
     switch (state) {
@@ -73,38 +89,42 @@ void loop1(void * parameter) {
         releasing();
         break;
       default:
-        break;
+        Serial.println("Something went wrong!");
+        exit(0);
     }
   }
 }
 
+/**
+ * Interface Controller
+ */
 void loop2(void * parameter) {
   // local resources
-  boolean led_on = true;
+  bool led_on = true;
   long next_led_update_time = millis() + get_state_period(led_on);
 
   for (;;) {
+    // check if led needs to be updated
     if (millis() > next_led_update_time) {
-      // update the led
       next_led_update_time = millis() + get_state_period(led_on);
       digitalWrite(led_pin, led_on);
       led_on = !led_on;
     }
 
-    // listen for button presses
-    if (!debounceButton(5)) { // a button connect to pin 5
+    // check for button presses
+    if (!debounceButton(homing_button, 0)) {
       state = HOMING;
       Serial.println("HOMING...");
     }
-    if (!debounceButton(18)) { // a button connect to pin 18, etc..
+    if (!debounceButton(grasping_button, 1)) {
       state = GRASPING;
       Serial.println("GRASPING...");
     }
-    if (!debounceButton(19)) {
+    if (!debounceButton(moving_button, 2)) {
       state = MOVING;
       Serial.println("MOVING...");
     }
-    if (!debounceButton(21)) {
+    if (!debounceButton(releasing_button, 3)) {
       state = RELEASING;
       Serial.println("RELEASING...");
     }
@@ -112,107 +132,92 @@ void loop2(void * parameter) {
 }
 
 /**
- * This function drives the motor until
- * a limit switch indicated the motor is at "home position"
+ * drive the motor until the limit switch closes
  */
 void homing() {
-  boolean at_home = false; // this would be the reading of a limit switch
+  bool at_home = false;
   while (!at_home && state == HOMING) {
     // go home
+    at_home = !digitalRead(limit_switch_pin);
   }
+  motor_position = 0;
 }
 
 /**
- * This function drives the motor until 
- * a sensor indicates it is adequately grasped
+ * drive the motor until the item is grasped
  */
 void grasping() {
-  boolean grasped = false; // this might be the reading of a strain gauge
+  bool grasped = false;
+  bool item_is_graspable = false;
   while (!grasped && state == GRASPING) {
-    // close the fingers until the object is grasped
+    item_is_graspable = !digitalRead(item_sensor_pin); // && motor_position < 10*360;
+    if (item_is_graspable) {
+      // close the fingers until the object is grasped
+    } else {
+      // stop the motor. maybe open the fingers if needed?
+    }
+    grasped = !digitalRead(strain_sensor_pin);
   }
 }
 
 /**
- * I think this function just applies constant 
- * torque to the gripper until it has arrived
+ * drive the motor until arrived at destination
  */
 void moving() {
-  boolean arrived = false; // this might be the reading of a proximity sensor
+  bool arrived = false;
   while (!arrived && state == MOVING) {
     // wait until the gripper has arrived
+    arrived = !digitalRead(destination_sensor_pin); // true on falling edge
   }
 }
 
 /**
- * This function drives the motor until 
- * a sensor indicates there is enough clearance
+ * drive the motor until the item is released
  */
 void releasing() {
-  boolean released = false; // this might be the reading of a strain gauge
+  bool released = false;
   while (!released && state == RELEASING) {
     // open the fingers until the object is released
+    released = digitalRead(strain_sensor_pin); // complement reading to `grasped` in grasping()
   }
 }
 
 /**
- * return the time until 
- * the led needs to be updated
+ * return the time until the led needs to be updated
  */
-long get_state_period(boolean ontime) {
+long get_state_period(bool ontime) {
   switch (state) {
     case GRASPING:
-      return ontime ? 100 : 900;
+      return ontime ? 100 : 900; // 10% duty cycle
     case MOVING:
-      return ontime ? 400 : 600;
-      break;
+      return ontime ? 400 : 600; // 40% duty cycle
     case RELEASING:
-      return ontime ? 999 : 1;
-      break;
+      return ontime ? 999 : 1; // 100% duty cycle
     case HOMING:
-      return ontime ? 700 : 300;
-      break;
+      return ontime ? 700 : 300; // 70% duty cycle
     default:
-      return 100;
-      break;
+      return 0;
   }
 }
 
 /**
- * return 0 if pin is pulled low
- * else, return 1
+ * return 0 if button is pressed; else return 1
  */
-int debounceButton(int pin)
+int debounceButton(int pin, int index)
 {
   int reading = digitalRead(pin);
 
-  // overwrite pin with corresponding array index 
-  switch (pin) {
-    case homing_button:
-      pin = 0;
-      break;
-    case grasping_button:
-      pin = 1;
-      break;
-    case moving_button:
-      pin = 2;
-      break;
-    case releasing_button:
-      pin = 3;
-      break;
-  }
-
   // button state has changed
-  if (reading != lastPinState[pin])
+  if (reading != lastPinState[index])
     lastDbTime = millis();
-  lastPinState[pin] = reading;
+  lastPinState[index] = reading;
 
   // see if new button state remains for longer than 50ms
   if ((millis() - lastDbTime) > 50) {
-    if (reading != pinState[pin]) {
-      pinState[pin] = reading;
+    if (reading != pinState[index]) {
+      pinState[index] = reading;
       return reading; // 1 on release, 0 on press
     }
   }
-  return 1;
+  return 1; // stub
 }
