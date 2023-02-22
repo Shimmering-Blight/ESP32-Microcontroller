@@ -1,14 +1,16 @@
-// states
+/* STATES */
 #define HOMING 0b00
 #define GRASPING 0b01
 #define MOVING 0b10
 #define RELEASING 0b11
 
-// multitasking objects
-TaskHandle_t Task1;
-TaskHandle_t Task2;
+/* MULTITASKING OBJECTS*/
+TaskHandle_t task1;
+TaskHandle_t task2;
+hw_timer_t * timer0;
 
-// constants
+/* CONSTANTS */
+const int cf = 100;                     // control frequency in Hz
 const int led_pin = 2;                  // on-board LED
 const int rotary_encoder_pin = 4;       // motor position sensor
 const int voltage_converter_pin = 12;   // connected to VIN of LT8300 flyback converter
@@ -21,12 +23,17 @@ const int grasping_button = 18;         // go-to GRASPING state
 const int moving_button = 19;           // go-to MOVING state
 const int releasing_button = 21;        // go-to RELEASING state
 
-// variables
+/* VARIABLES */
 volatile int state = HOMING;            // global FSM state
 volatile int motor_position;            // reading from rotary_encoder_pin (set in ISR)
 int pinState[] = {0,0,0,0};             // used for debouncing, etc...
 int lastPinState[] = {0,0,0,0};
 int lastDbTime = 0;
+
+/* ISR */
+void IRAM_ATTR sample_data() {
+  motor_position = analogRead(rotary_encoder_pin);
+}
 
 void setup() {
   Serial.begin(115200);   
@@ -48,33 +55,39 @@ void setup() {
 
 void setup1() {
   xTaskCreatePinnedToCore(
-    loop1,    // Function to implement the task
-    "Task1",  // Name of the task 
-    10000,    // Stack size in words 
-    NULL,     // Task input parameter 
-    0,        // Priority of the task 
-    &Task1,   // Task handle. 
-    0);       // Core where the task should run
+    loop1,    // function to implement the task
+    "task1",  // name of the task 
+    10000,    // stack size in words 
+    NULL,     // task input parameter 
+    0,        // priority of the task 
+    &task1,   // task handle
+    0);       // core where the task should run
 }
 
 void setup2() {
-  xTaskCreatePinnedToCore(
-    loop2,
-    "Task2", 
-    10000,  
-    NULL,  
-    1,  
-    &Task2,  
-    1); 
+  xTaskCreatePinnedToCore(loop2, "task2", 10000, NULL, 1, &task2, 1);
+  setup_timer0(); // pin timer0 to core 2
+}
+
+/**
+ * documentation can be found at:
+ * https://espressif-docs.readthedocs-hosted.com/projects/arduino-esp32/en/latest/api/timer.html
+ */
+void setup_timer0() {
+  timer0 = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer0, &sample_data, true);
+  timerAlarmWrite(timer0, 1000000/cf, true);
+  timerAlarmEnable(timer0);
 }
 
 void loop() {}
 
 /**
- * FSM Controller
+ * Motor Controller
  */
 void loop1(void * parameter) {
   for (;;) {
+    print_state(); // display state each iteration
     switch (state) {
       case HOMING:
         homing();
@@ -99,14 +112,13 @@ void loop1(void * parameter) {
  * Interface Controller
  */
 void loop2(void * parameter) {
-  // local resources
   bool led_on = true;
-  long next_led_update_time = millis() + get_state_period(led_on);
+  long next_led_update_time = millis() + get_led_period(led_on);
 
   for (;;) {
     // check if led needs to be updated
     if (millis() > next_led_update_time) {
-      next_led_update_time = millis() + get_state_period(led_on);
+      next_led_update_time = millis() + get_led_period(led_on);
       digitalWrite(led_pin, led_on);
       led_on = !led_on;
     }
@@ -114,20 +126,32 @@ void loop2(void * parameter) {
     // check for button presses
     if (!debounceButton(homing_button, 0)) {
       state = HOMING;
-      Serial.println("HOMING...");
     }
     if (!debounceButton(grasping_button, 1)) {
       state = GRASPING;
-      Serial.println("GRASPING...");
     }
     if (!debounceButton(moving_button, 2)) {
       state = MOVING;
-      Serial.println("MOVING...");
     }
     if (!debounceButton(releasing_button, 3)) {
       state = RELEASING;
-      Serial.println("RELEASING...");
     }
+  }
+}
+
+int print_state() {
+  Serial.print("State: ");
+  switch (state) {
+    case GRASPING:
+      return Serial.println("GRASPING");
+    case MOVING:
+      return Serial.println("MOVING");
+    case RELEASING:
+      return Serial.println("RELEASING");
+    case HOMING:
+      return Serial.println("HOMING");
+    default:
+      return Serial.println("UNDEFINED");
   }
 }
 
@@ -185,7 +209,7 @@ void releasing() {
 /**
  * return the time until the led needs to be updated
  */
-long get_state_period(bool ontime) {
+long get_led_period(bool ontime) {
   switch (state) {
     case GRASPING:
       return ontime ? 100 : 900; // 10% duty cycle
