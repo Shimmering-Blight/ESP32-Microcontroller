@@ -5,6 +5,8 @@
 #define RELEASING                 0b11
 #define PULSES_PER_REV            948
 #define UPDATE_DISPLAY_INTERVAL   50
+#define MOTOR_PWM_CHANNEL         0
+#define FREQUENCY                 1000
 // #define CONTROL_FREQUENCY 100 // not sure if this is needed for our method of position sensing
 
 /* PINS */
@@ -15,6 +17,9 @@
 #define ITEM_FLAG         14    // item flag detection
 #define DESTINATION_FLAG  33    // destination flag detection
 #define LIMIT_SWITCH      34    // for homing
+#define PWM               27    // PWM going to motor driver
+#define MOTOR_PIN_1       25    // First motor pin, HIGH for open, LOW for close
+#define MOTOR_PIN_2       24    // Second motor pin, LOW for open, HIGH for close
 #define HOMING_BUTTON     5     // for debugging
 #define GRASPING_BUTTON   18    // for debugging
 #define MOVING_BUTTON     19    // for debugging
@@ -60,8 +65,18 @@ void setup() {
 
   // outputs
   pinMode(LED, OUTPUT);
+  pinMode(PWM, OUTPUT);
+  pinMode(MOTOR_PIN_1, OUTPUT);
+  pinMode(MOTOR_PIN_2, OUTPUT);
 
-  // setup core 1 and 2 on ESP32
+  //configure motor PWM functionalities
+  ledcSetup(MOTOR_PWM_CHANNEL, FREQUENCY, 8); //last number is resolution of duty cycle 
+                                              //2^8 = duty cycles from 0 to 256, can be higher
+  
+  //attach pin to PWM channel
+  ledcAttachPin(PWM, MOTOR_PWM_CHANNEL);
+
+  //setup core 1 and 2 on ESP32
   setup_core1();
   setup_core2();
 
@@ -239,9 +254,11 @@ void update_display() {
 void homing() {
   bool at_home = false;
   while (!at_home && state == HOMING) {
-    // TODO: go home (open the gripper)
+    digitalWrite(MOTOR_PIN_1, HIGH); //done
+    digitalWrite(MOTOR_PIN_2, LOW);
     at_home = !(bool)digitalRead(LIMIT_SWITCH);
   }
+  digitalWrite(MOTOR_PIN_1, LOW);
   motor_position = 0;
 }
 
@@ -254,9 +271,12 @@ void grasping() {
   while (!grasped && state == GRASPING) {
     item_is_graspable = (bool)digitalRead(ITEM_SENSOR);
     if (item_is_graspable) {
-      // TODO: close the gripper until the object is grasped
+      // TODO: close the gripper until the object is grasped //done
+      digitalWrite(MOTOR_PIN_1, LOW);
+      digitalWrite(MOTOR_PIN_2, HIGH);
     } else {
-      // TODO: stop the motor. maybe open the fingers if needed?
+      // TODO: stop the motor. maybe open the fingers if needed? //done
+      digitalWrite(MOTOR_PIN_2, LOW);
     }
     grasped = false; // TODO: implement detection for this
   }
@@ -279,8 +299,11 @@ void moving() {
 void releasing() {
   bool released = false;
   while (!released && state == RELEASING) {
-    // TODO: open the fingers until the object is released
-    released = false; // TODO: implement this
+    // TODO: open the fingers until the object is released //done
+    digitalWrite(MOTOR_PIN_1, HIGH);
+    digitalWrite(MOTOR_PIN_2, LOW);
+    released = !(bool)digitalRead(LIMIT_SWITCH); // TODO: implement this
+    //imo should just completely open the thing, no need to detect when object has been let go
   }
 }
 
