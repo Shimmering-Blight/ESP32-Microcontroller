@@ -1,59 +1,75 @@
-/* STATES */
-#define HOMING 0b00
-#define GRASPING 0b01
-#define MOVING 0b10
-#define RELEASING 0b11
+/* CONSTANTS */
+#define HOMING                    0b00
+#define GRASPING                  0b01
+#define MOVING                    0b10
+#define RELEASING                 0b11
+#define PULSES_PER_REV            948
+#define UPDATE_DISPLAY_INTERVAL   50
+// #define CONTROL_FREQUENCY 100 // not sure if this is needed for our method of position sensing
+
+/* PINS */
+#define LED               2     // on-board LED
+#define ENC_A             3     // A channel of encoder
+#define ENC_B             4     // B channel of encoder
+#define ITEM_SENSOR       13    // camera within gripper
+#define ITEM_FLAG         14    // item flag detection
+#define DESTINATION_FLAG  33    // destination flag detection
+#define LIMIT_SWITCH      34    // for homing
+#define HOMING_BUTTON     5     // for debugging
+#define GRASPING_BUTTON   18    // for debugging
+#define MOVING_BUTTON     19    // for debugging
+#define RELEASING_BUTTON  21    // for debugging
 
 /* MULTITASKING OBJECTS*/
 TaskHandle_t task1;
 TaskHandle_t task2;
-hw_timer_t * timer0;
-
-/* CONSTANTS */
-const int cf = 100;                     // control frequency in Hz
-const int led_pin = 2;                  // on-board LED
-const int rotary_encoder_pin = 4;       // motor position sensor
-const int voltage_converter_pin = 12;   // connected to VIN of LT8300 flyback converter
-const int item_sensor_pin = 13;         // item detection
-const int destination_sensor_pin = 14;  // destination detection
-const int strain_sensor_pin = 33;       // gripper force detection
-const int limit_switch_pin = 34;        // limit switch
-const int homing_button = 5;            // go-to HOMING state
-const int grasping_button = 18;         // go-to GRASPING state
-const int moving_button = 19;           // go-to MOVING state
-const int releasing_button = 21;        // go-to RELEASING state
+// hw_timer_t * timer0; not sure if this is needed for our method of position sensing
 
 /* VARIABLES */
-volatile int state = HOMING;            // global FSM state
-volatile int motor_position;            // reading from rotary_encoder_pin (set in ISR)
-int pinState[] = {0,0,0,0};             // used for debouncing, etc...
-int lastPinState[] = {0,0,0,0};
-int lastDbTime = 0;
+int state = HOMING;                       // global FSM state
+volatile long motor_position = 0;         // set in ISR
+long last_motor_position = 0;
+int pin_state[] = {0,0,0,0};              // rest used for debouncing button presses
+int last_pin_state[] = {0,0,0,0};
+unsigned long last_debounce_time = 0;
 
 /* ISR */
-void IRAM_ATTR sample_data() {
-  motor_position = analogRead(rotary_encoder_pin);
+void read_encoder() {
+  if ((bool)digitalRead(ENC_B)) {
+    motor_position++;
+  }
+  else {
+    motor_position--;
+  }
 }
 
 void setup() {
-  Serial.begin(115200);   
-  Serial.println("Hello World!");
-  pinMode(led_pin, OUTPUT);
-  pinMode(voltage_converter_pin, OUTPUT);
-  pinMode(item_sensor_pin, INPUT);
-  pinMode(destination_sensor_pin, INPUT);
-  pinMode(strain_sensor_pin, INPUT);
-  pinMode(limit_switch_pin, INPUT_PULLUP); // connect switch from input pin to ground
-  pinMode(homing_button, INPUT_PULLUP); // connect button from input pin to ground
-  pinMode(grasping_button, INPUT_PULLUP); // connect button from input pin to ground
-  pinMode(moving_button, INPUT_PULLUP); // connect button from input pin to ground
-  pinMode(releasing_button, INPUT_PULLUP); // connect button from input pin to ground
-  setup1(); // initialize core 1
-  setup2(); // initialize core 2
-  Serial.println("Here we go!");
+  Serial.begin(115200);
+
+  // inputs
+  pinMode(ENC_A, INPUT);
+  pinMode(ENC_B, INPUT);
+  pinMode(ITEM_SENSOR, INPUT);
+  pinMode(ITEM_FLAG, INPUT);
+  pinMode(DESTINATION_FLAG, INPUT);
+  pinMode(LIMIT_SWITCH, INPUT_PULLUP);
+  pinMode(HOMING_BUTTON, INPUT_PULLUP);
+  pinMode(GRASPING_BUTTON, INPUT_PULLUP);
+  pinMode(MOVING_BUTTON, INPUT_PULLUP);
+  pinMode(RELEASING_BUTTON, INPUT_PULLUP);
+
+  // outputs
+  pinMode(LED, OUTPUT);
+
+  // setup core 1 and 2 on ESP32
+  setup_core1();
+  setup_core2();
+
+  // ISR (I think we need to use control frequency instead)
+  attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, RISING);
 }
 
-void setup1() {
+void setup_core1() {
   xTaskCreatePinnedToCore(
     loop1,    // function to implement the task
     "task1",  // name of the task 
@@ -64,21 +80,22 @@ void setup1() {
     0);       // core where the task should run
 }
 
-void setup2() {
+void setup_core2() {
   xTaskCreatePinnedToCore(loop2, "task2", 10000, NULL, 1, &task2, 1);
-  setup_timer0(); // pin timer0 to core 2
+  // setup_timer0(); // pin timer0 to core 2; not sure if this is needed for our method of position sensing
 }
 
-/**
- * documentation can be found at:
- * https://espressif-docs.readthedocs-hosted.com/projects/arduino-esp32/en/latest/api/timer.html
- */
-void setup_timer0() {
-  timer0 = timerBegin(0, 80, true);
-  timerAttachInterrupt(timer0, &sample_data, true);
-  timerAlarmWrite(timer0, 1000000/cf, true);
-  timerAlarmEnable(timer0);
-}
+// not sure if this is needed for our method of position sensing
+// /**
+//  * documentation can be found at:
+//  * https://espressif-docs.readthedocs-hosted.com/projects/arduino-esp32/en/latest/api/timer.html
+//  */
+// void setup_timer0() {
+//   timer0 = timerBegin(0, 80, true);
+//   timerAttachInterrupt(timer0, &read_encoder, true);
+//   timerAlarmWrite(timer0, 1000000/CONTROL_FREQUENCY, true);
+//   timerAlarmEnable(timer0);
+// }
 
 void loop() {}
 
@@ -87,7 +104,6 @@ void loop() {}
  */
 void loop1(void * parameter) {
   for (;;) {
-    print_state(); // display state each iteration
     switch (state) {
       case HOMING:
         homing();
@@ -112,47 +128,109 @@ void loop1(void * parameter) {
  * Interface Controller
  */
 void loop2(void * parameter) {
-  bool led_on = true;
-  long next_led_update_time = millis() + get_led_period(led_on);
+  unsigned long curr_time = 0;
+  unsigned long next_update_led_time = 0;
+  unsigned long next_update_display_time = 0;
 
   for (;;) {
+    curr_time = millis();
+
     // check if led needs to be updated
-    if (millis() > next_led_update_time) {
-      next_led_update_time = millis() + get_led_period(led_on);
-      digitalWrite(led_pin, led_on);
-      led_on = !led_on;
+    if (curr_time > next_update_led_time) {
+      next_update_led_time = curr_time + get_led_interval(update_led());
+    }
+
+    // update the display
+    if (curr_time > next_update_display_time) {
+      next_update_display_time = curr_time + UPDATE_DISPLAY_INTERVAL;
+      update_display();
     }
 
     // check for button presses
-    if (!debounceButton(homing_button, 0)) {
+    if (!debounceButton(curr_time, HOMING_BUTTON, 0)) {
       state = HOMING;
     }
-    if (!debounceButton(grasping_button, 1)) {
+    if (!debounceButton(curr_time, GRASPING_BUTTON, 1)) {
       state = GRASPING;
     }
-    if (!debounceButton(moving_button, 2)) {
+    if (!debounceButton(curr_time, MOVING_BUTTON, 2)) {
       state = MOVING;
     }
-    if (!debounceButton(releasing_button, 3)) {
+    if (!debounceButton(curr_time, RELEASING_BUTTON, 3)) {
       state = RELEASING;
     }
   }
 }
 
-int print_state() {
-  Serial.print("State: ");
+/**
+ * updates the LED
+ */
+bool update_led() {
+  bool led_state = digitalRead(LED);
+  digitalWrite(LED, !led_state);
+  return led_state;
+}
+
+/**
+ * return the time until the led needs to be updated
+ */
+long get_led_interval(bool led_state) {
+  switch (state) {
+    case HOMING:
+      return led_state ? 300 : 700; // 70% duty cycle
+    case GRASPING:
+      return led_state ? 900 : 100; // 10% duty cycle
+    case MOVING:
+      return led_state ? 600 : 400; // 40% duty cycle
+    case RELEASING:
+      return led_state ? 0 : 1000; // 100% duty cycle
+    default:
+      return 0;
+  }
+}
+
+void update_display() {
+  long angle = ((long)((float)motor_position / 948. * 360) % 360);
+  if (motor_position < 0) {
+    angle = 360 + angle;
+  }
+  long num_steps = abs(motor_position - last_motor_position);
+  int direction = (motor_position > last_motor_position) ? 1 : -1;
+  float rpm = (float)num_steps / (float)PULSES_PER_REV * 60000. / (float)UPDATE_DISPLAY_INTERVAL;
+  last_motor_position = motor_position;
+
+  // print the state
+  Serial.print("STATE: ");
   switch (state) {
     case GRASPING:
-      return Serial.println("GRASPING");
+      Serial.print("GRASPING");
+      break;
     case MOVING:
-      return Serial.println("MOVING");
+      Serial.print("MOVING");
+      break;
     case RELEASING:
-      return Serial.println("RELEASING");
+      Serial.print("RELEASING");
+      break;
     case HOMING:
-      return Serial.println("HOMING");
+      Serial.print("HOMING");
+      break;
     default:
-      return Serial.println("UNDEFINED");
+      Serial.print("UNDEFINED");
+      break;
   }
+  Serial.print('\t');
+
+  //update the display
+  Serial.print("POSITION: ");
+  Serial.print(motor_position);
+  Serial.print('\t');
+  Serial.print("ANGLE: ");
+  Serial.print(angle);
+  Serial.print('\t');
+  Serial.print(" SPEED: ");
+  Serial.print(rpm);
+  Serial.print(" RPM ");
+  Serial.println((direction == 1) ? "CCW" : "CW");
 }
 
 /**
@@ -161,8 +239,8 @@ int print_state() {
 void homing() {
   bool at_home = false;
   while (!at_home && state == HOMING) {
-    // go home
-    at_home = !digitalRead(limit_switch_pin);
+    // TODO: go home (open the gripper)
+    at_home = !(bool)digitalRead(LIMIT_SWITCH);
   }
   motor_position = 0;
 }
@@ -174,13 +252,13 @@ void grasping() {
   bool grasped = false;
   bool item_is_graspable = false;
   while (!grasped && state == GRASPING) {
-    item_is_graspable = !digitalRead(item_sensor_pin); // && motor_position < 10*360;
+    item_is_graspable = (bool)digitalRead(ITEM_SENSOR);
     if (item_is_graspable) {
-      // close the fingers until the object is grasped
+      // TODO: close the gripper until the object is grasped
     } else {
-      // stop the motor. maybe open the fingers if needed?
+      // TODO: stop the motor. maybe open the fingers if needed?
     }
-    grasped = !digitalRead(strain_sensor_pin);
+    grasped = false; // TODO: implement detection for this
   }
 }
 
@@ -190,8 +268,8 @@ void grasping() {
 void moving() {
   bool arrived = false;
   while (!arrived && state == MOVING) {
-    // wait until the gripper has arrived
-    arrived = !digitalRead(destination_sensor_pin); // true on falling edge
+    // TODO: wait until the gripper has arrived
+    arrived = (bool)digitalRead(DESTINATION_FLAG);
   }
 }
 
@@ -201,45 +279,27 @@ void moving() {
 void releasing() {
   bool released = false;
   while (!released && state == RELEASING) {
-    // open the fingers until the object is released
-    released = digitalRead(strain_sensor_pin); // complement reading to `grasped` in grasping()
-  }
-}
-
-/**
- * return the time until the led needs to be updated
- */
-long get_led_period(bool ontime) {
-  switch (state) {
-    case GRASPING:
-      return ontime ? 100 : 900; // 10% duty cycle
-    case MOVING:
-      return ontime ? 400 : 600; // 40% duty cycle
-    case RELEASING:
-      return ontime ? 999 : 1; // 100% duty cycle
-    case HOMING:
-      return ontime ? 700 : 300; // 70% duty cycle
-    default:
-      return 0;
+    // TODO: open the fingers until the object is released
+    released = false; // TODO: implement this
   }
 }
 
 /**
  * return 0 if button is pressed; else return 1
  */
-int debounceButton(int pin, int index)
+int debounceButton(unsigned long curr_time, int pin, int index)
 {
   int reading = digitalRead(pin);
 
   // button state has changed
-  if (reading != lastPinState[index])
-    lastDbTime = millis();
-  lastPinState[index] = reading;
+  if (reading != last_pin_state[index])
+    last_debounce_time = millis();
+  last_pin_state[index] = reading;
 
   // see if new button state remains for longer than 50ms
-  if ((millis() - lastDbTime) > 50) {
-    if (reading != pinState[index]) {
-      pinState[index] = reading;
+  if ((curr_time - last_debounce_time) > 50) {
+    if (reading != pin_state[index]) {
+      pin_state[index] = reading;
       return reading; // 1 on release, 0 on press
     }
   }
