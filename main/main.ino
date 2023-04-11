@@ -7,6 +7,7 @@
 #define UPDATE_DISPLAY_INTERVAL   50
 #define MOTOR_PWM_CHANNEL         0
 #define FREQUENCY                 1000
+#define THRESHOLD                 20      // capacitance threshold for sensor
 // #define CONTROL_FREQUENCY 100 // not sure if this is needed for our method of position sensing
 
 /* PINS */
@@ -24,6 +25,7 @@
 #define GRASPING_BUTTON   18    // for debugging
 #define MOVING_BUTTON     19    // for debugging
 #define RELEASING_BUTTON  21    // for debugging
+#define SENSOR_PIN        16    // touch pin
 
 /* MULTITASKING OBJECTS*/
 TaskHandle_t task1;
@@ -37,6 +39,7 @@ long last_motor_position = 0;
 int pin_state[] = {0,0,0,0};              // rest used for debouncing button presses
 int last_pin_state[] = {0,0,0,0};
 unsigned long last_debounce_time = 0;
+int touchvalue;                           // variable used for storing the touch pin value
 
 /* ISR */
 void read_encoder() {
@@ -268,17 +271,14 @@ void homing() {
 void grasping() {
   bool grasped = false;
   bool item_is_graspable = false;
+  digitalWrite(MOTOR_PIN_1, LOW);  // TODO: close the gripper until the object is grasped //done
+  digitalWrite(MOTOR_PIN_2, HIGH);
   while (!grasped && state == GRASPING) {
-    item_is_graspable = (bool)digitalRead(ITEM_SENSOR);
-    if (item_is_graspable) {
-      // TODO: close the gripper until the object is grasped //done
-      digitalWrite(MOTOR_PIN_1, LOW);
-      digitalWrite(MOTOR_PIN_2, HIGH);
-    } else {
-      // TODO: stop the motor. maybe open the fingers if needed? //done
+    touchvalue = touchRead(SENSOR_PIN); // TODO: implement detection for this //done
+    if (touchvalue < THRESHOLD) {
+      grasped = true;
       digitalWrite(MOTOR_PIN_2, LOW);
     }
-    grasped = false; // TODO: implement detection for this
   }
 }
 
