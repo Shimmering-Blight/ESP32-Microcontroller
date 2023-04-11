@@ -5,7 +5,8 @@
 #define RELEASING                 0b11
 #define PULSES_PER_REV            948
 #define UPDATE_DISPLAY_INTERVAL   50
-#define MOTOR_PWM_CHANNEL         0
+#define MOTOR_PWM_CHANNEL_1       0
+#define MOTOR_PWM_CHANNEL_2       0
 #define FREQUENCY                 1000
 #define THRESHOLD                 20      // capacitance threshold for sensor
 // #define CONTROL_FREQUENCY 100 // not sure if this is needed for our method of position sensing
@@ -18,9 +19,8 @@
 #define ITEM_FLAG         14    // item flag detection
 #define DESTINATION_FLAG  33    // destination flag detection
 #define LIMIT_SWITCH      34    // for homing
-#define PWM               27    // PWM going to motor driver
-#define MOTOR_PIN_1       25    // First motor pin, HIGH for open, LOW for close
-#define MOTOR_PIN_2       24    // Second motor pin, LOW for open, HIGH for close
+#define MOTOR_PIN_1       25    // First PWM motor pin
+#define MOTOR_PIN_2       24    // Second PWM motor pin
 #define HOMING_BUTTON     5     // for debugging
 #define GRASPING_BUTTON   18    // for debugging
 #define MOVING_BUTTON     19    // for debugging
@@ -68,16 +68,19 @@ void setup() {
 
   // outputs
   pinMode(LED, OUTPUT);
-  pinMode(PWM, OUTPUT);
   pinMode(MOTOR_PIN_1, OUTPUT);
   pinMode(MOTOR_PIN_2, OUTPUT);
 
   //configure motor PWM functionalities
-  ledcSetup(MOTOR_PWM_CHANNEL, FREQUENCY, 8); //last number is resolution of duty cycle 
-                                              //2^8 = duty cycles from 0 to 256, can be higher
+  ledcSetup(MOTOR_PWM_CHANNEL_1, FREQUENCY, 8); //last number is resolution of duty cycle 
+  ledcSetup(MOTOR_PWM_CHANNEL_2, FREQUENCY, 8); //2^8 = duty cycles from 0 to 256, can be higher
   
   //attach pin to PWM channel
-  ledcAttachPin(PWM, MOTOR_PWM_CHANNEL);
+  ledcAttachPin(MOTOR_PIN_1, MOTOR_PWM_CHANNEL);
+  ledcAttachPin(MOTOR_PIN_2, MOTOR_PWM_CHANNEL);
+  
+  ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
+  ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
 
   //setup core 1 and 2 on ESP32
   setup_core1();
@@ -257,11 +260,11 @@ void update_display() {
 void homing() {
   bool at_home = false;
   while (!at_home && state == HOMING) {
-    digitalWrite(MOTOR_PIN_1, HIGH); //done
-    digitalWrite(MOTOR_PIN_2, LOW);
+    ledcWrite(MOTOR_PWM_CHANNEL_1, 127); //done
+    ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
     at_home = !(bool)digitalRead(LIMIT_SWITCH);
   }
-  digitalWrite(MOTOR_PIN_1, LOW);
+  ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
   motor_position = 0;
 }
 
@@ -271,13 +274,13 @@ void homing() {
 void grasping() {
   bool grasped = false;
   bool item_is_graspable = false;
-  digitalWrite(MOTOR_PIN_1, LOW);  // TODO: close the gripper until the object is grasped //done
-  digitalWrite(MOTOR_PIN_2, HIGH);
+  ledcWrite(MOTOR_PWM_CHANNEL_1, 0);  // TODO: close the gripper until the object is grasped //done
+  ledcWrite(MOTOR_PWM_CHANNEL_2, 127);
   while (!grasped && state == GRASPING) {
     touchvalue = touchRead(SENSOR_PIN); // TODO: implement detection for this //done
     if (touchvalue < THRESHOLD) {
       grasped = true;
-      digitalWrite(MOTOR_PIN_2, LOW);
+      ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
     }
   }
 }
@@ -300,8 +303,8 @@ void releasing() {
   bool released = false;
   while (!released && state == RELEASING) {
     // TODO: open the fingers until the object is released //done
-    digitalWrite(MOTOR_PIN_1, HIGH);
-    digitalWrite(MOTOR_PIN_2, LOW);
+    ledcWrite(MOTOR_PWM_CHANNEL_1, 127);
+    ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
     released = !(bool)digitalRead(LIMIT_SWITCH); // TODO: implement this
     //imo should just completely open the thing, no need to detect when object has been let go
   }
