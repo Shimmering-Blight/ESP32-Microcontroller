@@ -7,6 +7,7 @@
 #define GRASPING                  0b01
 #define MOVING                    0b10
 #define RELEASING                 0b11
+#define THRESHOLD                 20
 
 /* PINS */
 #define LED               2     // on-board LED
@@ -14,6 +15,7 @@
 #define ENC_B             4     // B channel of encoder
 #define ITEM_SENSOR       13    // camera within gripper
 #define ITEM_FLAG         14    // item flag detection
+#define SENSOR_PIN        16    // touch sensor pin
 #define SS_PIN            10    // RFID pin
 #define RST_PIN           9     // RFID pin
 #define DESTINATION_FLAG  33    // destination flag detection
@@ -45,6 +47,7 @@ volatile long motor_position;             // set in ISR
 int pin_state[] = {0,0,0,0};              // rest used for debouncing button presses
 int last_pin_state[] = {0,0,0,0};
 unsigned long last_debounce_time = 0; 
+int touchvalue;
 
 /* ISR */
 void read_encoder() {
@@ -296,19 +299,17 @@ void homing() {
 void grasping() {
   bool grasped = false;
   bool item_is_graspable = false;
+  // TODO: close the gripper until the object is grasped 
+  // TODO: need some way to detect when object is grasped, closing action is complete
+  ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
+  ledcWrite(MOTOR_PWM_CHANNEL_2, 127);
   while (!grasped && state == GRASPING) {
-    item_is_graspable = (bool)digitalRead(ITEM_SENSOR);
-    if (item_is_graspable) {
-      // TODO: close the gripper until the object is grasped 
-      // TODO: need some way to detect when object is grasped, closing action is complete
-      ledcWrite(MOTOR_PWM_CHANNEL_1, 127);
-      ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
-    } else {
-      // TODO: stop the motor. maybe open the fingers if needed? 
-      ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
+    touchvalue = touchRead(SENSOR_PIN); // TODO: implement detection for this //done
+    if (touchvalue < THRESHOLD) {
+      grasped = true;
+      digitalWrite(MOTOR_PIN_2, LOW);
       ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
     }
-    grasped = false; // TODO: implement detection for this
   }
 }
 
