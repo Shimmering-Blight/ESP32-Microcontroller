@@ -302,21 +302,40 @@ void homing() {
  * drive the motor until the item is grasped
  */
 void grasping() {
-
+  drive_motor_forward(255);
+  while(motor_position < 5 * PULSES_PER_REV);
+  stop_motor();
+  delay(100);
+  while(RFIDfunc() != 1 );
+  drive_motor_reverse(255);
+  while (true) {
+    if ((bool)digitalRead(SENSOR_PIN))
+      break;
+  }
+  stop_motor();
+  state = MOVING;
 }
 
 /**
  * drive the motor until arrived at destination
  */
 void moving() {
-
+  while(RFIDfunc() != -1 );
+  state = RELEASING
 }
 
 /**
  * drive the motor until the item is released
  */
 void releasing() {
-
+  drive_motor_forward(255);
+  while (true) {
+    if (!(bool)digitalRead(SENSOR_PIN))
+      break;
+  }
+  delay(100);
+  stop_motor();
+  state = -1;  
 }
 
 /**
@@ -364,7 +383,7 @@ void stop_motor() {
   digitalWrite(HBRIDGE_REVERSE, LOW);
 }
 
-int RFIDFunc ()
+int read_RFID()
 {
   // Look for new cards
   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
@@ -372,27 +391,18 @@ int RFIDFunc ()
     String uid = "";
     for (byte i = 0; i < rfid.uid.size; i++) {
       uid += String(rfid.uid.uidByte[i], HEX);
-    }
-    // Print UID to serial monitor
-    Serial.println("UID: " + uid);
+  }
 
-    // Check if card is origin or destination
+  int ret = 0;
+  // Check if card is origin or destination
   if (uid == origin_uid) {
-      // return 1
-      Serial.println("Origin Chip Detected, return 1");
-      return 1;
-    } else if (uid == dest_uid) {
-      // return -1
-      Serial.println("Destination Chip Detected, return -1");
-      return -1;
-    } else {
-      // UID not recognized
-      Serial.println("Neither Chip Detected, return 0");
-      return 0;
-    }
+    ret = 1;
+  } else if (uid == dest_uid) {
+    ret = -1;
   }
   rfid.PICC_HaltA(); // Stop reading
   rfid.PCD_StopCrypto1(); // Stop encryption on PCD
+  return ret;
 }
 
 bool isStationary() {
