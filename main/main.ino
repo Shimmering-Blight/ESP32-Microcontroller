@@ -15,8 +15,8 @@
 #define ITEM_SENSOR       13    // camera within gripper
 #define ITEM_FLAG         14    // item flag detection
 #define SENSOR_PIN        16    // touch sensor pin
-#define SS_PIN            10    // RFID pin
-#define RST_PIN           9     // RFID pin
+#define SS_PIN            5    // RFID pin
+#define RST_PIN           D0     // RFID pin
 #define DESTINATION_FLAG  33    // destination flag detection
 #define LIMIT_SWITCH      34    // for homing
 #define HBRIDGE_FORWARD   25    // First motor driver pin
