@@ -1,17 +1,12 @@
 #include <SPI.h>
 #include <MFRC522.h>
+#include "FastIMU.h"
 
-/* CONSTANTS */
+/* STATES */
 #define HOMING                    0b00
 #define GRASPING                  0b01
 #define MOVING                    0b10
 #define RELEASING                 0b11
-#define PULSES_PER_REV            948
-#define UPDATE_DISPLAY_INTERVAL   50
-#define MOTOR_PWM_CHANNEL_1       0
-#define MOTOR_PWM_CHANNEL_2       1
-#define FREQUENCY                 1000
-// #define CONTROL_FREQUENCY 100 // not sure if this is needed for our method of position sensing
 
 /* PINS */
 #define LED               2     // on-board LED
@@ -23,34 +18,43 @@
 #define RST_PIN           9     // RFID pin
 #define DESTINATION_FLAG  33    // destination flag detection
 #define LIMIT_SWITCH      34    // for homing
-#define PWM_1             25    // First motor driver pin
-#define PWM_2             24    // Second motor driver pin
+#define HBRIDGE_FORWARD   25    // First motor driver pin
+#define HBRIDGE_REVERSE   24    // Second motor driver pin
+
 #define HOMING_BUTTON     5     // for debugging
 #define GRASPING_BUTTON   18    // for debugging
 #define MOVING_BUTTON     19    // for debugging
 #define RELEASING_BUTTON  21    // for debugging
 
-/* MULTITASKING OBJECTS*/
+/* CONSTANTS */
+#define PULSES_PER_REV            700
+#define origin_uid                "9145341d"
+#define dest_uid                  "904ad626"
+
+/* OBJECTS */
 TaskHandle_t task1;
 TaskHandle_t task2;
-// hw_timer_t * timer0; not sure if this is needed for our method of position sensing
+MPU6050 IMU;
+calData calib = { 0 };
+GyroData gyroData;
+MFRC522 rfid(SS_PIN, RST_PIN);  //create instance of MFRC522
 
 /* VARIABLES */
 int state = HOMING;                       // global FSM state
-volatile long motor_position = 0;         // set in ISR
-long last_motor_position = 0;
+volatile long motor_position;             // set in ISR
 int pin_state[] = {0,0,0,0};              // rest used for debouncing button presses
 int last_pin_state[] = {0,0,0,0};
-unsigned long last_debounce_time = 0;
+unsigned long last_debounce_time = 0; 
 
-MFRC522 rfid(SS_PIN, RST_PIN);  //create instance of MFRC522
-
-String origin_uid = "9145341d";
-String dest_uid = "904ad626";
-
-MPU6050 IMU;
-calData calib = { 0 };
-GyroData gyroData; 
+/* ISR */
+void read_encoder() {
+  if ((bool)digitalRead(ENC_B)) {
+    motor_position++;
+  }
+  else {
+    motor_position--;
+  }
+}
 
 // call in setup()
 void setupIMU() {
@@ -78,34 +82,25 @@ void setupIMU() {
   }
 }
 
-/* ISR */
-void read_encoder() {
-  if ((bool)digitalRead(ENC_B)) {
-    motor_position++;
-  }
-  else {
-    motor_position--;
-  }
-}
-
 void setup() {
   Serial.begin(115200);
 
-  // inputs
-  pinMode(ENC_A, INPUT);
-  pinMode(ENC_B, INPUT);
-  pinMode(ITEM_SENSOR, INPUT);
-  pinMode(ITEM_FLAG, INPUT);
-  pinMode(DESTINATION_FLAG, INPUT);
+  // buttons
   pinMode(LIMIT_SWITCH, INPUT_PULLUP);
   pinMode(HOMING_BUTTON, INPUT_PULLUP);
   pinMode(GRASPING_BUTTON, INPUT_PULLUP);
   pinMode(MOVING_BUTTON, INPUT_PULLUP);
   pinMode(RELEASING_BUTTON, INPUT_PULLUP);
 
+  // inputs
+  pinMode(ENC_A, INPUT);
+  pinMode(ENC_B, INPUT);
+
   // outputs
   pinMode(LED, OUTPUT);
-
+  pinMode(HBRIDGE_FORWARD, OUTPUT);
+  pinMode(HBRIDGE_REVERSE, OUTPUT);
+  
   //configure motor PWM functionalities
   ledcSetup(MOTOR_PWM_CHANNEL_1, FREQUENCY, 8);
   ledcSetup(MOTOR_PWM_CHANNEL_2, FREQUENCY, 8);
@@ -144,18 +139,6 @@ void setup_core2() {
   xTaskCreatePinnedToCore(loop2, "task2", 10000, NULL, 1, &task2, 1);
   // setup_timer0(); // pin timer0 to core 2; not sure if this is needed for our method of position sensing
 }
-
-// not sure if this is needed for our method of position sensing
-// /**
-//  * documentation can be found at:
-//  * https://espressif-docs.readthedocs-hosted.com/projects/arduino-esp32/en/latest/api/timer.html
-//  */
-// void setup_timer0() {
-//   timer0 = timerBegin(0, 80, true);
-//   timerAttachInterrupt(timer0, &read_encoder, true);
-//   timerAlarmWrite(timer0, 1000000/CONTROL_FREQUENCY, true);
-//   timerAlarmEnable(timer0);
-// }
 
 void loop() {}
 
