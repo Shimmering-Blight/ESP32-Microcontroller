@@ -48,6 +48,36 @@ MFRC522 rfid(SS_PIN, RST_PIN);  //create instance of MFRC522
 String origin_uid = "9145341d";
 String dest_uid = "904ad626";
 
+MPU6050 IMU;
+calData calib = { 0 };
+GyroData gyroData; 
+
+// call in setup()
+void setupIMU() {
+  int err = IMU.init(calib, IMU_ADDRESS);
+  if (err != 0) {
+    Serial.print("Error initializing IMU: ");
+    Serial.println(err);
+    while (true);
+  }
+
+  // calibrate the IMU
+  IMU.calibrateAccelGyro(&calib);
+  delay(1000);
+
+  // begin communication
+  IMU.init(calib, IMU_ADDRESS);
+  delay(1000);
+
+
+  err = IMU.setGyroRange(500);      //USE THESE TO SET THE RANGE, IF AN INVALID RANGE IS SET IT WILL RETURN -1
+  if (err != 0) {
+    Serial.print("Error Setting range: ");
+    Serial.println(err);
+    while (true);
+  }
+}
+
 /* ISR */
 void read_encoder() {
   if ((bool)digitalRead(ENC_B)) {
@@ -75,8 +105,6 @@ void setup() {
 
   // outputs
   pinMode(LED, OUTPUT);
-  pinMode(MOTOR_PIN_1, OUTPUT);
-  pinMode(MOTOR_PIN_2, OUTPUT);
 
   //configure motor PWM functionalities
   ledcSetup(MOTOR_PWM_CHANNEL_1, FREQUENCY, 8);
@@ -97,6 +125,8 @@ void setup() {
 
   SPI.begin();        // initialize SPI bus
   rfid.PCD_Init();     // initialize MFRC522
+
+  setupIMU();
 }
 
 void setup_core1() {
@@ -270,10 +300,10 @@ void homing() {
   bool at_home = false;
   while (!at_home && state == HOMING) {
     ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
-    ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
+    ledcWrite(MOTOR_PWM_CHANNEL_2, 127);
     at_home = !(bool)digitalRead(LIMIT_SWITCH);
   }
-  digitalWrite(MOTOR_PIN_1, LOW);
+  ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
   motor_position = 0;
 }
 
@@ -378,4 +408,8 @@ int RFIDFunc (int returner)
   }
   rfid.PICC_HaltA(); // Stop reading
   rfid.PCD_StopCrypto1(); // Stop encryption on PCD
+}
+
+bool isStationary() {
+  return (abs(gyroData.gyroX) < 1) && (abs(gyroData.gyroY) < 1) && (abs(gyroData.gyroZ) < 1);
 }
