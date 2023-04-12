@@ -1,3 +1,6 @@
+#include <SPI.h>
+#include <MFRC522.h>
+
 /* CONSTANTS */
 #define HOMING                    0b00
 #define GRASPING                  0b01
@@ -16,6 +19,8 @@
 #define ENC_B             4     // B channel of encoder
 #define ITEM_SENSOR       13    // camera within gripper
 #define ITEM_FLAG         14    // item flag detection
+#define SS_PIN            10    // RFID pin
+#define RST_PIN           9     // RFID pin
 #define DESTINATION_FLAG  33    // destination flag detection
 #define LIMIT_SWITCH      34    // for homing
 #define PWM_1             25    // First motor driver pin
@@ -37,6 +42,11 @@ long last_motor_position = 0;
 int pin_state[] = {0,0,0,0};              // rest used for debouncing button presses
 int last_pin_state[] = {0,0,0,0};
 unsigned long last_debounce_time = 0;
+
+MFRC522 rfid(SS_PIN, RST_PIN);  //create instance of MFRC522
+
+String origin_uid = "9145341d";
+String dest_uid = "904ad626";
 
 /* ISR */
 void read_encoder() {
@@ -84,6 +94,9 @@ void setup() {
 
   // ISR (I think we need to use control frequency instead)
   attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, RISING);
+
+  SPI.begin();        // initialize SPI bus
+  rfid.PCD_Init();     // initialize MFRC522
 }
 
 void setup_core1() {
@@ -311,6 +324,7 @@ void releasing() {
     //note on limit switch: shouldn't require debounce, is quite reliable when tested
     //imo should just completely open the thing, no need to detect when object has been let go
   }
+  ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
 }
 
 /**
@@ -333,4 +347,35 @@ int debounceButton(unsigned long curr_time, int pin, int index)
     }
   }
   return 1; // stub
+}
+
+int RFIDFunc (int returner)
+{
+  // Look for new cards
+  if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+    // Get the UID of the card
+    String uid = "";
+    for (byte i = 0; i < rfid.uid.size; i++) {
+      uid += String(rfid.uid.uidByte[i], HEX);
+    }
+    // Print UID to serial monitor
+    Serial.println("UID: " + uid);
+
+    // Check if card is origin or destination
+  if (uid == origin_uid) {
+      // return 1
+      Serial.println("Origin Chip Detected, return 1");
+      return 1;
+    } else if (uid == dest_uid) {
+      // return -1
+      Serial.println("Destination Chip Detected, return -1");
+      return -1;
+    } else {
+      // UID not recognized
+      Serial.println("Neither Chip Detected, return 0");
+      return 0;
+    }
+  }
+  rfid.PICC_HaltA(); // Stop reading
+  rfid.PCD_StopCrypto1(); // Stop encryption on PCD
 }
