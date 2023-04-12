@@ -3,33 +3,34 @@
 #include "FastIMU.h"
 
 /* STATES */
-#define HOMING                    0b00
-#define GRASPING                  0b01
-#define MOVING                    0b10
-#define RELEASING                 0b11
+#define HOMING      0b00
+#define GRASPING    0b01
+#define MOVING      0b10
+#define RELEASING   0b11
 
 /* PINS */
 #define LED               2     // on-board LED
 #define ENC_A             3     // A channel of encoder
 #define ENC_B             4     // B channel of encoder
-#define ITEM_SENSOR       13    // camera within gripper
-#define ITEM_FLAG         14    // item flag detection
-#define SS_PIN            10    // RFID pin
-#define RST_PIN           9     // RFID pin
-#define DESTINATION_FLAG  33    // destination flag detection
 #define LIMIT_SWITCH      34    // for homing
 #define HBRIDGE_FORWARD   25    // First motor driver pin
 #define HBRIDGE_REVERSE   24    // Second motor driver pin
-
 #define HOMING_BUTTON     5     // for debugging
 #define GRASPING_BUTTON   18    // for debugging
 #define MOVING_BUTTON     19    // for debugging
 #define RELEASING_BUTTON  21    // for debugging
 
+// TODO
+#define SS_PIN 1
+#define RST_PIN 1
+#define FORCE_SENSOR 1
+
 /* CONSTANTS */
-#define PULSES_PER_REV            700
-#define origin_uid                "9145341d"
-#define dest_uid                  "904ad626"
+#define IMU_ADDRESS 0x68
+#define PULSES_PER_REV 700
+#define UPDATE_DISPLAY_INTERVAL 50
+String origin_uid = "9145341d";
+String dest_uid = "904ad626";
 
 /* OBJECTS */
 TaskHandle_t task1;
@@ -41,12 +42,14 @@ MFRC522 rfid(SS_PIN, RST_PIN);  //create instance of MFRC522
 
 /* VARIABLES */
 int state = HOMING;                       // global FSM state
-volatile long motor_position;             // set in ISR
+volatile bool at_home;
+volatile long motor_position = 0;             // set in ISR
+long last_motor_position = 0;
 int pin_state[] = {0,0,0,0};              // rest used for debouncing button presses
 int last_pin_state[] = {0,0,0,0};
 unsigned long last_debounce_time = 0; 
 
-/* ISR */
+/* motor_position ISR */
 void read_encoder() {
   if ((bool)digitalRead(ENC_B)) {
     motor_position++;
@@ -54,6 +57,11 @@ void read_encoder() {
   else {
     motor_position--;
   }
+}
+
+/* at_home ISR */
+void read_limit_switch() {
+  at_home = (bool)digitalRead(LIMIT_SWITCH);
 }
 
 // call in setup()
@@ -100,28 +108,17 @@ void setup() {
   pinMode(LED, OUTPUT);
   pinMode(HBRIDGE_FORWARD, OUTPUT);
   pinMode(HBRIDGE_REVERSE, OUTPUT);
-  
-  //configure motor PWM functionalities
-  ledcSetup(MOTOR_PWM_CHANNEL_1, FREQUENCY, 8);
-  ledcSetup(MOTOR_PWM_CHANNEL_2, FREQUENCY, 8);
-
-  ledcAttachPin(PWM_1, MOTOR_PWM_CHANNEL_1);
-  ledcAttachPin(PWM_2, MOTOR_PWM_CHANNEL_2);
-
-  ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
-  ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
 
   //setup core 1 and 2 on ESP32
   setup_core1();
   setup_core2();
 
-  // ISR (I think we need to use control frequency instead)
-  attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, RISING);
-
   SPI.begin();        // initialize SPI bus
   rfid.PCD_Init();     // initialize MFRC522
-
   setupIMU();
+  
+  attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, RISING);
+  attachInterrupt(digitalPinToInterrupt(LIMIT_SWITCH), read_limit_switch, CHANGE);
 }
 
 void setup_core1() {
@@ -280,64 +277,46 @@ void update_display() {
  * drive the motor until the limit switch closes
  */
 void homing() {
-  bool at_home = false;
-  while (!at_home && state == HOMING) {
-    ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
-    ledcWrite(MOTOR_PWM_CHANNEL_2, 127);
-    at_home = !(bool)digitalRead(LIMIT_SWITCH);
+  stop_motor();
+
+  if (!at_home) {
+    drive_motor_reverse(255); // half max speed
   }
-  ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
+  while (!at_home);
+  stop_motor();
+
+  drive_motor_forward(255); // max speed
+  while (at_home);
+  delay(100); // overshoot
+  stop_motor();
+
+  drive_motor_reverse(255/4); // quarter max speed
+  while(!at_home);
+  stop_motor();
+
   motor_position = 0;
+  state = GRASPING;
 }
 
 /**
  * drive the motor until the item is grasped
  */
 void grasping() {
-  bool grasped = false;
-  bool item_is_graspable = false;
-  while (!grasped && state == GRASPING) {
-    item_is_graspable = (bool)digitalRead(ITEM_SENSOR);
-    if (item_is_graspable) {
-      // TODO: close the gripper until the object is grasped 
-      // TODO: need some way to detect when object is grasped, closing action is complete
-      ledcWrite(MOTOR_PWM_CHANNEL_1, 127);
-      ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
-    } else {
-      // TODO: stop the motor. maybe open the fingers if needed? 
-      ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
-      ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
-    }
-    grasped = false; // TODO: implement detection for this
-  }
+
 }
 
 /**
  * drive the motor until arrived at destination
  */
 void moving() {
-  bool arrived = false;
-  while (!arrived && state == MOVING) {
-    // TODO: wait until the gripper has arrived
-    arrived = (bool)digitalRead(DESTINATION_FLAG);
-  }
+
 }
 
 /**
  * drive the motor until the item is released
  */
 void releasing() {
-  bool released = false;
-  while (!released && state == RELEASING) {
-    // TODO: open the fingers until the object is released //done
-    // TODO: need to detect when iris is completely open
-    ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
-    ledcWrite(MOTOR_PWM_CHANNEL_2, 127);
-    released = !(bool)digitalRead(LIMIT_SWITCH); // TODO: implement this
-    //note on limit switch: shouldn't require debounce, is quite reliable when tested
-    //imo should just completely open the thing, no need to detect when object has been let go
-  }
-  ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
+
 }
 
 /**
@@ -362,7 +341,30 @@ int debounceButton(unsigned long curr_time, int pin, int index)
   return 1; // stub
 }
 
-int RFIDFunc (int returner)
+void drive_motor_forward(int speed) {
+  digitalWrite(HBRIDGE_FORWARD, LOW);
+  if (speed < 0)
+    return analogWrite(HBRIDGE_REVERSE, LOW);
+  else if (speed > 255)
+    return analogWrite(HBRIDGE_REVERSE, HIGH);
+  analogWrite(HBRIDGE_REVERSE, speed);
+}
+
+void drive_motor_reverse(int speed) {
+  digitalWrite(HBRIDGE_FORWARD, LOW);
+  if (speed < 0)
+    return analogWrite(HBRIDGE_REVERSE, LOW);
+  else if (speed > 255)
+    return analogWrite(HBRIDGE_REVERSE, HIGH);
+  analogWrite(HBRIDGE_REVERSE, speed);
+}
+
+void stop_motor() {
+  digitalWrite(HBRIDGE_FORWARD, LOW);
+  digitalWrite(HBRIDGE_REVERSE, LOW);
+}
+
+int RFIDFunc ()
 {
   // Look for new cards
   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
