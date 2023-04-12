@@ -7,7 +7,6 @@
 #define GRASPING                  0b01
 #define MOVING                    0b10
 #define RELEASING                 0b11
-#define THRESHOLD                 20
 
 /* PINS */
 #define LED               2     // on-board LED
@@ -94,6 +93,7 @@ void setup() {
   pinMode(GRASPING_BUTTON, INPUT_PULLUP);
   pinMode(MOVING_BUTTON, INPUT_PULLUP);
   pinMode(RELEASING_BUTTON, INPUT_PULLUP);
+  pinMode(SENSOR_PIN, INPUT);
 
   // inputs
   pinMode(ENC_A, INPUT);
@@ -304,10 +304,9 @@ void grasping() {
   ledcWrite(MOTOR_PWM_CHANNEL_1, 0);
   ledcWrite(MOTOR_PWM_CHANNEL_2, 127);
   while (!grasped && state == GRASPING) {
-    touchvalue = touchRead(SENSOR_PIN); // TODO: implement detection for this //done
-    if (touchvalue < THRESHOLD) {
+    touchvalue = (bool)digitalRead(SENSOR_PIN); // TODO: implement detection for this //done
+    if (touchvalue) {
       grasped = true;
-      digitalWrite(MOTOR_PIN_2, LOW);
       ledcWrite(MOTOR_PWM_CHANNEL_2, 0);
     }
   }
