@@ -10,18 +10,20 @@
 
 /* PINS */
 #define LED               2     // on-board LED 
-#define ENC_A             3     // A channel of encoder
-#define ENC_B             4     // B channel of encoder
+#define ENC_A             4     // A channel of encoder
+#define ENC_B             5     // B channel of encoder
 #define LIMIT_SWITCH      34    // for homing
-#define SENSOR_PIN        7     // proximinity
-#define HBRIDGE_FORWARD   26    // First motor driver pin
-#define HBRIDGE_REVERSE   24    // Second motor driver pin
-#define AUDIO_STATE       29    // State sent through audio jack
-#define RESET_HOMING      30    // Reset coming from audio jack
+#define SENSOR_PIN        5     // proximinity
+#define HBRIDGE_FORWARD   18    // First motor driver pin
+#define HBRIDGE_REVERSE   19    // Second motor driver pin
+#define AUDIO_STATE       22    // State sent through audio jack
+#define RESET_HOMING      23    // Reset coming from audio jack
+#define PROX_TRIGGER      15
+#define PROX_ECHO         21
 
 // TODO
-#define RST_PIN  5             // RFID pin
-#define SS_PIN      10            // RFID pin
+#define RST_PIN  32             // RFID pin
+#define SS_PIN   35         // RFID pin
 // RFID/MPU6050 pins  ESP32 pins
 // Vcc -              3.3V
 // GND -              GND
@@ -35,6 +37,7 @@
 #define IMU_ADDRESS 0x68
 #define PULSES_PER_REV 700
 #define UPDATE_DISPLAY_INTERVAL 50
+#define GYRO_SENSITIVITY 3
 String origin_uid = "9145341d";
 String dest_uid = "904ad626";
 
@@ -71,7 +74,7 @@ void read_limit_switch() {
 }
 
 void read_reset_pin() {
-    ESP.restart();
+  ESP.restart();
 }
 
 // call in setup()
@@ -85,10 +88,6 @@ void setupIMU() {
 
   // calibrate the IMU
   IMU.calibrateAccelGyro(&calib);
-  delay(1000);
-
-  // begin communication
-  IMU.init(calib, IMU_ADDRESS);
   delay(1000);
 
   err = IMU.setGyroRange(500);      //USE THESE TO SET THE RANGE, IF AN INVALID RANGE IS SET IT WILL RETURN -1
@@ -109,12 +108,14 @@ void setup() {
   pinMode(ENC_A, INPUT);
   pinMode(ENC_B, INPUT);
   pinMode(RESET_HOMING, INPUT);
+  pinMode(PROX_ECHO, INPUT);
 
   // outputs
   pinMode(LED, OUTPUT);
   pinMode(HBRIDGE_FORWARD, OUTPUT);
   pinMode(HBRIDGE_REVERSE, OUTPUT);
   pinMode(AUDIO_STATE, OUTPUT);
+  pinMode(PROX_TRIGGER, OUTPUT);
 
   //setup core 1 and 2 on ESP32
   setup_core1();
@@ -125,7 +126,7 @@ void setup() {
   setupIMU();
   
   attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, RISING);
-  attachInterrupt(digitalPinToInterrupt(RESET_HOMING), read_reset_pin, RISING);
+  attachInterrupt(digitalPinToInterrupt(RESET_HOMING), read_reset_pin, CHANGE);
   attachInterrupt(digitalPinToInterrupt(LIMIT_SWITCH), read_limit_switch, CHANGE);
 }
 
@@ -274,7 +275,7 @@ void homing() {
   stop_motor();
 
   if (!at_home) {
-    drive_motor_reverse(255); // half max speed
+    drive_motor_reverse(255); // max speed
   }
   while (!at_home);
   stop_motor();
@@ -297,10 +298,12 @@ void homing() {
  */
 void grasping() {
   drive_motor_forward(255);
-  while(motor_position < 5 * PULSES_PER_REV);
+  while(motor_position < 1 * PULSES_PER_REV);
   stop_motor();
   delay(100);
   while(read_RFID() != 1 );
+  while(get_distance_cm() > 5);
+  while(!is_stationary());
   drive_motor_reverse(255);
   while (true) {
     if ((bool)digitalRead(SENSOR_PIN))
@@ -315,6 +318,8 @@ void grasping() {
  */
 void moving() {
   while(read_RFID() != -1 );
+  while(get_distance_cm() > 5);
+  while(!is_stationary());
   state = RELEASING;
 }
 
@@ -329,29 +334,7 @@ void releasing() {
   }
   delay(100);
   stop_motor();
-  state = -1;  
-}
-
-/**
- * return 0 if button is pressed; else return 1
- */
-int debounceButton(unsigned long curr_time, int pin, int index)
-{
-  int reading = digitalRead(pin);
-
-  // button state has changed
-  if (reading != last_pin_state[index])
-    last_debounce_time = millis();
-  last_pin_state[index] = reading;
-
-  // see if new button state remains for longer than 50ms
-  if ((curr_time - last_debounce_time) > 50) {
-    if (reading != pin_state[index]) {
-      pin_state[index] = reading;
-      return reading; // 1 on release, 0 on press
-    }
-  }
-  return 1; // stub
+  state = HOMING;
 }
 
 void drive_motor_forward(int speed) {
@@ -404,6 +387,18 @@ int read_RFID()
   }
 }
 
-bool isStationary() {
-  return (abs(gyroData.gyroX) < 1) && (abs(gyroData.gyroY) < 1) && (abs(gyroData.gyroZ) < 1);
+bool is_stationary() {
+  return (abs(gyroData.gyroX) < GYRO_SENSITIVITY) && (abs(gyroData.gyroY) < GYRO_SENSITIVITY) && (abs(gyroData.gyroZ) < GYRO_SENSITIVITY);
+}
+
+long get_distance_cm() {
+  long duration, distance;
+  digitalWrite(PROX_TRIGGER, LOW);  // Added this line
+  delayMicroseconds(2); // Added this line
+  digitalWrite(PROX_TRIGGER, HIGH);
+  delayMicroseconds(10); // Added this line
+  digitalWrite(PROX_TRIGGER, LOW);
+  duration = pulseIn(PROX_ECHO, HIGH);
+  distance = (duration/2) / 29.1;
+  return distance;
 }
