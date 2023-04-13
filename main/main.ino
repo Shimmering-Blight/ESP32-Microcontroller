@@ -7,6 +7,7 @@
 #define GRASPING    0b01
 #define MOVING      0b10
 #define RELEASING   0b11
+#define AUDIO       0
 
 /* PINS */
 #define LED               2     // on-board LED 
@@ -117,6 +118,10 @@ void setup() {
   pinMode(AUDIO_STATE, OUTPUT);
   pinMode(PROX_TRIGGER, OUTPUT);
 
+  // PWM for audio jack
+  ledcSetup(AUDIO, 5000, 10);
+  ledcAttachPin(AUDIO_STATE, AUDIO);
+
   //setup core 1 and 2 on ESP32
   setup_core1();
   setup_core2();
@@ -187,6 +192,7 @@ void loop2(void * parameter) {
     // check if led needs to be updated
     if (curr_time > next_update_led_time) {
       next_update_led_time = curr_time + get_led_interval(update_led());
+      ledcWrite(AUDIO, get_led_interval(update_led()));
     }
 
     // update the display
