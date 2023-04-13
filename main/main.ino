@@ -9,21 +9,27 @@
 #define RELEASING   0b11
 
 /* PINS */
-#define LED               2     // on-board LED
+#define LED               2     // on-board LED 
 #define ENC_A             3     // A channel of encoder
 #define ENC_B             4     // B channel of encoder
 #define LIMIT_SWITCH      34    // for homing
-#define HBRIDGE_FORWARD   25    // First motor driver pin
+#define SENSOR_PIN        7     // proximinity
+#define HBRIDGE_FORWARD   26    // First motor driver pin
 #define HBRIDGE_REVERSE   24    // Second motor driver pin
-#define HOMING_BUTTON     5     // for debugging
-#define GRASPING_BUTTON   18    // for debugging
-#define MOVING_BUTTON     19    // for debugging
-#define RELEASING_BUTTON  21    // for debugging
+#define AUDIO_STATE       29    // State sent through audio jack
+#define RESET_HOMING      30    // Reset coming from audio jack
 
 // TODO
-#define SS_PIN 1
-#define RST_PIN 1
-#define FORCE_SENSOR 1
+#define RST_PIN  5             // RFID pin
+#define SS_PIN      10            // RFID pin
+// RFID/MPU6050 pins  ESP32 pins
+// Vcc -              3.3V
+// GND -              GND
+// MISO -             38 (D19)
+// MOSI -             36 (D23)
+// SCK -              35 (D18)  
+// SDA -              34 (D6)
+// SCL -              39 (D22)
 
 /* CONSTANTS */
 #define IMU_ADDRESS 0x68
@@ -64,6 +70,10 @@ void read_limit_switch() {
   at_home = (bool)digitalRead(LIMIT_SWITCH);
 }
 
+void read_reset_pin() {
+    ESP.restart();
+}
+
 // call in setup()
 void setupIMU() {
   int err = IMU.init(calib, IMU_ADDRESS);
@@ -81,7 +91,6 @@ void setupIMU() {
   IMU.init(calib, IMU_ADDRESS);
   delay(1000);
 
-
   err = IMU.setGyroRange(500);      //USE THESE TO SET THE RANGE, IF AN INVALID RANGE IS SET IT WILL RETURN -1
   if (err != 0) {
     Serial.print("Error Setting range: ");
@@ -95,19 +104,17 @@ void setup() {
 
   // buttons
   pinMode(LIMIT_SWITCH, INPUT_PULLUP);
-  pinMode(HOMING_BUTTON, INPUT_PULLUP);
-  pinMode(GRASPING_BUTTON, INPUT_PULLUP);
-  pinMode(MOVING_BUTTON, INPUT_PULLUP);
-  pinMode(RELEASING_BUTTON, INPUT_PULLUP);
 
   // inputs
   pinMode(ENC_A, INPUT);
   pinMode(ENC_B, INPUT);
+  pinMode(RESET_HOMING, INPUT);
 
   // outputs
   pinMode(LED, OUTPUT);
   pinMode(HBRIDGE_FORWARD, OUTPUT);
   pinMode(HBRIDGE_REVERSE, OUTPUT);
+  pinMode(AUDIO_STATE, OUTPUT);
 
   //setup core 1 and 2 on ESP32
   setup_core1();
@@ -118,6 +125,7 @@ void setup() {
   setupIMU();
   
   attachInterrupt(digitalPinToInterrupt(ENC_A), read_encoder, RISING);
+  attachInterrupt(digitalPinToInterrupt(RESET_HOMING), read_reset_pin, RISING);
   attachInterrupt(digitalPinToInterrupt(LIMIT_SWITCH), read_limit_switch, CHANGE);
 }
 
@@ -184,20 +192,6 @@ void loop2(void * parameter) {
     if (curr_time > next_update_display_time) {
       next_update_display_time = curr_time + UPDATE_DISPLAY_INTERVAL;
       update_display();
-    }
-
-    // check for button presses
-    if (!debounceButton(curr_time, HOMING_BUTTON, 0)) {
-      state = HOMING;
-    }
-    if (!debounceButton(curr_time, GRASPING_BUTTON, 1)) {
-      state = GRASPING;
-    }
-    if (!debounceButton(curr_time, MOVING_BUTTON, 2)) {
-      state = MOVING;
-    }
-    if (!debounceButton(curr_time, RELEASING_BUTTON, 3)) {
-      state = RELEASING;
     }
   }
 }
@@ -306,7 +300,7 @@ void grasping() {
   while(motor_position < 5 * PULSES_PER_REV);
   stop_motor();
   delay(100);
-  while(RFIDfunc() != 1 );
+  while(read_RFID() != 1 );
   drive_motor_reverse(255);
   while (true) {
     if ((bool)digitalRead(SENSOR_PIN))
@@ -320,8 +314,8 @@ void grasping() {
  * drive the motor until arrived at destination
  */
 void moving() {
-  while(RFIDfunc() != -1 );
-  state = RELEASING
+  while(read_RFID() != -1 );
+  state = RELEASING;
 }
 
 /**
@@ -391,18 +385,23 @@ int read_RFID()
     String uid = "";
     for (byte i = 0; i < rfid.uid.size; i++) {
       uid += String(rfid.uid.uidByte[i], HEX);
-  }
+    }
 
-  int ret = 0;
-  // Check if card is origin or destination
-  if (uid == origin_uid) {
-    ret = 1;
-  } else if (uid == dest_uid) {
-    ret = -1;
+    // Check if card is origin or destination
+    if (uid == origin_uid) {
+      rfid.PICC_HaltA(); // Stop reading
+      rfid.PCD_StopCrypto1(); // Stop encryption on PCD
+      return 1;
+    } else if (uid == dest_uid) {
+      rfid.PICC_HaltA(); // Stop reading
+      rfid.PCD_StopCrypto1(); // Stop encryption on PCD
+      return -1;
+    } else {
+      rfid.PICC_HaltA(); // Stop reading
+      rfid.PCD_StopCrypto1(); // Stop encryption on PCD
+      return 0;
+    }
   }
-  rfid.PICC_HaltA(); // Stop reading
-  rfid.PCD_StopCrypto1(); // Stop encryption on PCD
-  return ret;
 }
 
 bool isStationary() {
